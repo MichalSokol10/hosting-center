@@ -1,0 +1,78 @@
+#!/bin/bash
+
+useradd $1
+usermod -a -G www-data $1
+usermod -a -G sudo $1
+mkdir -p /var/www/$1
+chown -R $1:$1 /var/www/$1
+
+echo "$1 ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+echo "[$1]
+listen = /run/php/$1.sock
+listen.allowed_clients = 127.0.0.1
+listen.owner = $1
+listen.mode = 0660
+listen.group = www-data
+user = $1
+group = $1
+pm = ondemand
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 5
+pm.max_requests = 200
+pm.process_idle_timeout=10s" > $PHP_INI_DIR/fpm/pool.d/$1.conf
+
+mkdir -p /etc/nginx/ssl/$1
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/nginx/ssl/$1/$1.key -out /etc/nginx/ssl/$1/$1.crt -subj "/CN=$1"
+
+echo "
+server {
+    listen 80;
+    server_name $1 www.$1;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $1 www.$1;
+    root /var/www/$1;
+    index index.html index.php;
+
+    ssl_certificate /etc/nginx/ssl/$1/$1.crt;
+    ssl_certificate_key /etc/nginx/ssl/$1/$1.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384;
+    ssl_ecdh_curve secp384r1;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+    # ssl_stapling on;
+    # ssl_stapling_verify on;
+    resolver 8.8.8.8 8.8.4.4 valid=300s;
+    resolver_timeout 5s;
+    # add_header Strict-Transport-Security 'max-age=63072000; includeSubDomains; preload';
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+
+    ssl_dhparam /etc/nginx/ssl/dhparam.pem;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ \.php$ {
+        try_files \$uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php/$1.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}" > /etc/nginx/conf.d/$1.conf
+
+# virtuální uživatel pro pure-ftpd
+(echo "$2"; echo "$2") | pure-pw useradd "$1" -u "$1" -d "/var/www/$1" -m
+pure-pw mkdb

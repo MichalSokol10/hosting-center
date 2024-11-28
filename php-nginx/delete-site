@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Odstranění uživatele
+userdel -f $1
+
+# Odstranění uživatelského adresáře
+rm -rf /var/www/$1 /etc/php/8.2/fpm/pool.d/$1.conf /run/php/$1.sock /etc/nginx/ssl/$1 /etc/nginx/conf.d/$1.conf
+
+# Odstranění virtuálního uživatele FTP
+(echo "$1") | pure-pw userdel $1 -m
+pure-pw mkdb
+
+echo "Webová stránka a všechny související zdroje byly úspěšně odstraněny."
+
+# restart pro změnu konfigurace
+service php8.2-fpm reload
+nginx -s reload
